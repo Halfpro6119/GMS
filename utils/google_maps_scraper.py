@@ -18,10 +18,6 @@ from os import mkdir
 class GoogleMaps:
     """
     A web scraping class for extracting data from Google Maps search results.
-
-    ...
-    (Docstring unchanged for brevity)
-    ...
     """
 
     _maps_url = "https://www.google.com/maps"
@@ -87,17 +83,44 @@ class GoogleMaps:
         driver.get(url)
 
     def handle_consent_screen(self, driver):
-        """Automatically accepts the Google Maps consent screen if present."""
+        """
+        Detect and interact with the Google consent screen, clicking 'Accept' or 'Reject' if present.
+        """
         try:
-            possible_texts = ['Accept', 'I agree', 'Accept all', 'Agree']
-            for text in possible_texts:
-                buttons = driver.find_elements(By.XPATH, f"//button[contains(., '{text}')]")
+            # Wait up to 15 seconds for any of the consent buttons to appear
+            WebDriverWait(driver, 15).until(
+                lambda d: (
+                    d.find_elements(By.XPATH, "//button[contains(., 'Accept all')]")
+                    or d.find_elements(By.XPATH, "//button[contains(., 'Accept')]")
+                    or d.find_elements(By.XPATH, "//button[contains(., 'I agree')]")
+                    or d.find_elements(By.XPATH, "//button[contains(., 'Reject all')]")
+                    or d.find_elements(By.XPATH, "//button[contains(., 'Reject')]")
+                    or d.find_elements(By.XPATH, "//button[@id='L2AGLb']")
+                )
+            )
+            possible_xpaths = [
+                "//button[contains(., 'Accept all')]",
+                "//button[contains(., 'Accept')]",
+                "//button[contains(., 'I agree')]",
+                "//button[contains(., 'Reject all')]",
+                "//button[contains(., 'Reject')]",
+                "//button[@id='L2AGLb']",
+            ]
+            for xpath in possible_xpaths:
+                buttons = driver.find_elements(By.XPATH, xpath)
                 for btn in buttons:
                     if btn.is_displayed() and btn.is_enabled():
+                        if self._verbose:
+                            print(f"Consent handler: Clicking button with text '{btn.text}' and xpath '{xpath}'")
                         btn.click()
+                        sleep(1.5)  # Wait for dialog to disappear
                         return
-        except Exception:
-            pass  # Ignore if not present
+            if self._verbose:
+                print("Consent handler: Consent dialog detected, but no button was clickable.")
+        except Exception as e:
+            if self._verbose:
+                print(f"Consent handler: No consent dialog found or clicking failed. Details: {e}")
+            pass  # Continue if not present, or if clicking fails
 
     def search_query(self, query: str) -> None:
         search_box = self._wait.until(EC.presence_of_element_located((By.ID, "searchboxinput")))
@@ -197,24 +220,11 @@ class GoogleMaps:
             working_hours_text = self._unavailable_text
         return working_hours_text
 
-    def get_menu_link(self, driver: WebDriver) -> str:
-        try:
-            menu_link = driver.find_element(
-                By.CSS_SELECTOR,
-                'div.UCw5gc > div > div:nth-child(1) > a[data-tooltip="Open menu link"]')
-            menu_link_href = menu_link.get_attribute("href")
-
-        except Exception as e:
-            _ = e
-            menu_link_href = self._unavailable_text
-        return menu_link_href
-
     def get_website_link(self, driver: WebDriver) -> str:
         try:
             website = driver.find_element(By.CSS_SELECTOR, 'div.UCw5gc > div > div:nth-child(1) > a['
                                                            'data-tooltip="Open website"]')
             website_href = website.get_attribute("href")
-
         except Exception as e:
             _ = e
             website_href = self._unavailable_text
@@ -229,12 +239,10 @@ class GoogleMaps:
                         " ", "").replace("+", "").replace("-", "")
                     if ph_text.isnumeric():
                         phone = ph
-
                 phone_href = phone.text
             except Exception as e:
                 _ = e
                 phone_href = self._unavailable_text
-
         except Exception as e:
             _ = e
             phone_href = self._unavailable_text
@@ -271,8 +279,7 @@ class GoogleMaps:
             results = driver.find_elements(By.CLASS_NAME, 'hfpxzc')
             if self._results_range:
                 if len(results) >= self._results_range:
-                    temp_results = results[:self._results_range + 1]
-                    results = temp_results
+                    results = results[:self._results_range + 1]
                     break
 
             driver.execute_script('arguments[0].scrollIntoView(true);', results[-1])
