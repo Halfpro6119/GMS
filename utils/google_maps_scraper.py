@@ -1,93 +1,40 @@
-from selenium.common.exceptions import (TimeoutException, NoSuchElementException, StaleElementReferenceException,
-                                        NoSuchWindowException)
-from utils.output_files_formats import CSVCreator, XLSXCreator, JSONCreator
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.webdriver import WebDriver
-from selenium.webdriver.support.ui import WebDriverWait
-from utils.web_site_scraper import PatternScrapper
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
 import undetected_chromedriver as uc
-from utils.pprints import PPrints
-from threading import Lock, Event
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException, NoSuchWindowException
 from time import time, sleep
-from os.path import exists
 from random import uniform
-from os import mkdir
 
 class GoogleMaps:
-    """
-    A web scraping class for extracting data from Google Maps search results.
-    """
-
     _maps_url = "https://www.google.com/maps"
     _finger_print_defender_ext = "./extensions/finger_print_defender.crx"
 
-    def __init__(self, unavailable_text: str = "Not Available", output_format: str = "CSV",
-                 headless: bool = False,
-                 wait_time: int = 15, suggested_ext: list = None,
-                 output_path: str = "./OUTPUT_FILES", verbose: bool = True,
-                 print_lock: Lock = None, result_range: int = None,
-                 stop_event: Event = Event(),
-                 scroll_minutes: int = 1
-                 ) -> None:
-        if suggested_ext is None:
-            suggested_ext = []
-
+    def __init__(self, unavailable_text="Not Available", headless=True, wait_time=15, scroll_minutes=1, verbose=False):
         self._unavailable_text = unavailable_text
         self._headless = headless
         self._wait_time = wait_time
-        self._wait = None
-        self._main_handler = None
-        self._suggested_ext = suggested_ext
-        self._output_path = output_path
-        self._verbose = verbose
-        self._results_range = result_range
-        self._thread_lock = print_lock
-        self.__output_format = output_format
         self._scroll_minutes = scroll_minutes
+        self._verbose = verbose
 
-        self._web_pattern_scraper = PatternScrapper()
-        if self.__output_format.lower() == "json":
-            self._file_creator = JSONCreator(file_lock=print_lock, output_path=output_path)
-        elif self.__output_format.lower() == "excel":
-            self._file_creator = XLSXCreator(file_lock=print_lock, output_path=output_path)
-        else:
-            self._file_creator = CSVCreator(file_lock=print_lock, output_path=output_path)
-        self._print = PPrints(print_lock=print_lock)
-        self._stop_event = stop_event
-        self.__mode = "headless" if self._headless else "windowed"
-
-        # Create a path if not available
-        self.is_path_available()
-
-    def is_path_available(self) -> None:
-        if not exists(self._output_path):
-            mkdir(self._output_path)
-
-    def create_chrome_driver(self) -> WebDriver:
+    def create_chrome_driver(self):
         options = uc.ChromeOptions()
-        options.add_argument(argument='--title=Developer - Abdul Moez')
-        options.add_argument(argument='--disable-popup-blocking')
-        options.add_extension(extension=self._finger_print_defender_ext)
-        if self._headless:
-            driver = uc.Chrome(options=options, headless=True, use_subprocess=False)
-        else:
-            driver = uc.Chrome(options=options, headless=False, use_subprocess=False)
-        self._wait = WebDriverWait(driver, self._wait_time, ignored_exceptions=(NoSuchElementException,
-                                                                                StaleElementReferenceException))
+        options.add_argument('--disable-popup-blocking')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--headless=new')
+        options.add_argument('--window-size=1920,1080')
+        try:
+            options.add_extension(self._finger_print_defender_ext)
+        except Exception:
+            pass  # Extension is optional for cloud
+        driver = uc.Chrome(options=options, headless=True, use_subprocess=False)
+        self._wait = WebDriverWait(driver, self._wait_time, ignored_exceptions=(NoSuchElementException, StaleElementReferenceException))
         return driver
 
-    @staticmethod
-    def load_url(driver: WebDriver, url: str) -> None:
-        driver.get(url)
-
     def handle_consent_screen(self, driver):
-        """
-        Detect and interact with the Google consent screen, clicking 'Accept' or 'Reject' if present.
-        """
         try:
-            # Wait up to 15 seconds for any of the consent buttons to appear
             WebDriverWait(driver, 15).until(
                 lambda d: (
                     d.find_elements(By.XPATH, "//button[contains(., 'Accept all')]")
@@ -110,304 +57,152 @@ class GoogleMaps:
                 buttons = driver.find_elements(By.XPATH, xpath)
                 for btn in buttons:
                     if btn.is_displayed() and btn.is_enabled():
-                        if self._verbose:
-                            print(f"Consent handler: Clicking button with text '{btn.text}' and xpath '{xpath}'")
                         btn.click()
-                        sleep(1.5)  # Wait for dialog to disappear
+                        sleep(1.5)
                         return
-            if self._verbose:
-                print("Consent handler: Consent dialog detected, but no button was clickable.")
-        except Exception as e:
-            if self._verbose:
-                print(f"Consent handler: No consent dialog found or clicking failed. Details: {e}")
-            pass  # Continue if not present, or if clicking fails
+        except Exception:
+            pass
 
-    def search_query(self, query: str) -> None:
+    def search_query(self, driver, query):
         search_box = self._wait.until(EC.presence_of_element_located((By.ID, "searchboxinput")))
+        search_box.clear()
         search_box.send_keys(query)
         search_box.send_keys(Keys.RETURN)
+        sleep(2)
 
-    def validate_result_link(self, result: any, driver: WebDriver) -> tuple[str, str, str]:
+    def scroll_to_the_end_event(self, driver):
+        try:
+            self._wait.until(EC.presence_of_element_located((By.CLASS_NAME, "hfpxzc")))
+        except TimeoutException:
+            return ["continue"]
+
+        start_time = time()
+        scroll_wait = 1
+        while True:
+            results = driver.find_elements(By.CLASS_NAME, 'hfpxzc')
+            driver.execute_script('arguments[0].scrollIntoView(true);', results[-1])
+            driver.implicitly_wait(scroll_wait)
+            sleep(uniform(0.2, 0.6))
+            if time() - start_time > (self._scroll_minutes * 60):
+                break
+        return driver.find_elements(By.CLASS_NAME, 'hfpxzc')
+
+    def validate_result_link(self, result, driver):
         if result != "continue":
             get_link = result.get_attribute("href")
             driver.execute_script(f'''window.open("{get_link}", "_blank");''')
             driver.switch_to.window(driver.window_handles[-1])
         else:
             get_link = driver.current_url
-
         try:
             self._wait.until(EC.url_contains("@"))
-            lat_lng = driver.current_url.split("@")[1].split(",")[:2]
-        except Exception as e:
-            _ = e
-            lat_lng = [self._unavailable_text, self._unavailable_text]
+        except Exception:
+            pass
+        return get_link
 
-        return lat_lng[0], lat_lng[1], get_link
-
-    def get_cover_image(self) -> str:
+    def get_cover_image(self, driver):
         try:
-            cover_image = self._wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="QA0Szd"]/div/div/div['
-                                                                                     '1]/div[2]/div/div['
-                                                                                     '1]/div/div/div[1]/div['
-                                                                                     '1]/button/img')))
-            cover_image_src = cover_image.get_attribute("src")
-        except Exception as e:
-            _ = e
-            cover_image_src = self._unavailable_text
-        return cover_image_src
+            cover_image = self._wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="QA0Szd"]/div/div/div[1]/div[2]/div/div[1]/div/div/div[1]/div[1]/button/img')))
+            return cover_image.get_attribute("src")
+        except Exception:
+            return self._unavailable_text
 
-    def get_title(self, driver: WebDriver) -> str:
+    def get_title(self, driver):
         try:
-            title = driver.find_element(
-                By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > '
-                                 'div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > '
-                                 'div.lMbq3e > div:nth-child(1) > h1'
-            )
-            title_text = title.text
-        except Exception as e:
-            _ = e
-            title_text = self._unavailable_text
-        return title_text
+            title = driver.find_element(By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div:nth-child(1) > h1')
+            return title.text
+        except Exception:
+            return self._unavailable_text
 
-    def get_rating_in_card(self, driver: WebDriver) -> str:
+    def get_rating_in_card(self, driver):
         try:
-            rating = driver.find_element(
-                By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div '
-                                 '> div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > '
-                                 'div.lMbq3e > div.LBgpqf > div > div.fontBodyMedium.dmRWX > '
-                                 'div.F7nice > span:nth-child(1) > span:nth-child(1)'
-            )
-            rating_text = rating.text
-        except Exception as e:
-            _ = e
-            rating_text = self._unavailable_text
-        return rating_text
+            rating = driver.find_element(By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div.LBgpqf > div > div.fontBodyMedium.dmRWX > div.F7nice > span:nth-child(1) > span:nth-child(1)')
+            return rating.text
+        except Exception:
+            return self._unavailable_text
 
-    def get_category(self, driver: WebDriver) -> str:
+    def get_category(self, driver):
         try:
-            category = driver.find_element(By.CSS_SELECTOR,
-                                           '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > '
-                                           'div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e '
-                                           '> '
-                                           'div.LBgpqf > div > div:nth-child(2) > span > span > button')
-            category_text = category.text
+            category = driver.find_element(By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div.LBgpqf > div > div:nth-child(2) > span > span > button')
+            return category.text
+        except Exception:
+            return self._unavailable_text
 
-        except Exception as e:
-            _ = e
-            category_text = self._unavailable_text
-        return category_text
-
-    def get_address(self, driver: WebDriver) -> str:
+    def get_address(self, driver):
         try:
             address = driver.find_element(By.CLASS_NAME, 'rogA2c')
-            address_text = address.text
-        except Exception as e:
-            _ = e
-            address_text = self._unavailable_text
-        return address_text
+            return address.text
+        except Exception:
+            return self._unavailable_text
 
-    def get_working_hours(self, driver: WebDriver) -> str:
+    def get_website_link(self, driver):
         try:
-            driver.find_element(
-                By.CSS_SELECTOR, 'div.OqCZI.fontBodyMedium.WVXvdc > div.OMl5r.hH0dDd.jBYmhd'
-            ).click()
+            website = driver.find_element(By.CSS_SELECTOR, 'div.UCw5gc > div > div:nth-child(1) > a[data-tooltip="Open website"]')
+            return website.get_attribute("href")
+        except Exception:
+            return self._unavailable_text
+
+    def get_phone_number(self, driver):
+        try:
+            phone = driver.find_elements(By.CLASS_NAME, 'rogA2c')
+            for ph in phone:
+                ph_text = ph.text.replace("(", "").replace(")", "").replace(" ", "").replace("+", "").replace("-", "")
+                if ph_text.isnumeric():
+                    return ph.text
+            return self._unavailable_text
+        except Exception:
+            return self._unavailable_text
+
+    def get_working_hours(self, driver):
+        try:
+            driver.find_element(By.CSS_SELECTOR, 'div.OqCZI.fontBodyMedium.WVXvdc > div.OMl5r.hH0dDd.jBYmhd').click()
             working_hours = driver.find_element(By.CSS_SELECTOR, 'div.t39EBf.GUrTXd > div > table')
             working_hours_text = working_hours.text.strip().split("\n")
             working_hours_text = [x.strip() for x in working_hours_text if x]
-            working_hours_text = ",".join(working_hours_text)
-        except Exception as e:
-            _ = e
-            working_hours_text = self._unavailable_text
-        return working_hours_text
+            return ",".join(working_hours_text)
+        except Exception:
+            return self._unavailable_text
 
-    def get_website_link(self, driver: WebDriver) -> str:
-        try:
-            website = driver.find_element(By.CSS_SELECTOR, 'div.UCw5gc > div > div:nth-child(1) > a['
-                                                           'data-tooltip="Open website"]')
-            website_href = website.get_attribute("href")
-        except Exception as e:
-            _ = e
-            website_href = self._unavailable_text
-        return website_href
-
-    def get_phone_number(self, driver: WebDriver) -> str:
-        try:
-            phone = driver.find_elements(By.CLASS_NAME, 'rogA2c')
-            try:
-                for ph in phone:
-                    ph_text = ph.text.replace("(", "").replace(")", "").replace(
-                        " ", "").replace("+", "").replace("-", "")
-                    if ph_text.isnumeric():
-                        phone = ph
-                phone_href = phone.text
-            except Exception as e:
-                _ = e
-                phone_href = self._unavailable_text
-        except Exception as e:
-            _ = e
-            phone_href = self._unavailable_text
-        return phone_href
-
-    def __pprint_override(self, query: str, status: str, results_indices: any([str, list[int]]) = "Calculating"):
-        if self._verbose:
-            self._print.print_with_lock(
-                query=query, status=status, mode=self.__mode, results_indices=results_indices
-            )
-        else:
-            self._print.print_with_lock(
-                query=query, status=f"[Verbose is off] {status}",
-                mode=self.__mode, results_indices=results_indices
-            )
-
-    def reset_driver_for_next_run(self, result: any, driver: WebDriver) -> None:
+    def reset_driver_for_next_run(self, result, driver):
         if result != "continue":
             driver.close()
-            driver.switch_to.window(self._main_handler)
+            driver.switch_to.window(driver.window_handles[0])
             self._wait.until(EC.presence_of_element_located((By.CLASS_NAME, "hfpxzc")))
 
-    def scroll_to_the_end_event(self, driver: WebDriver) -> list:
+    def scrape(self, query, row_number_start=1):
+        """
+        Returns a list of dicts, each matching the Roofing Leads schema.
+        """
+        leads = []
         try:
-            self._wait.until(EC.presence_of_element_located((By.CLASS_NAME, "hfpxzc")))
-        except TimeoutException:
-            results = ["continue"]
-            return results
-
-        scroll_end = 'div.PbZDve  > p.fontBodyMedium  > span > span[class="HlvSq"]'
-        start_time = time()
-        scroll_wait = 1
-        while True:
-            results = driver.find_elements(By.CLASS_NAME, 'hfpxzc')
-            if self._results_range:
-                if len(results) >= self._results_range:
-                    results = results[:self._results_range + 1]
-                    break
-
-            driver.execute_script('arguments[0].scrollIntoView(true);', results[-1])
-            driver.implicitly_wait(scroll_wait)
-            try:
-                text_span = driver.find_element(By.CSS_SELECTOR, scroll_end)
-                if "you've reached the end" in text_span.text.lower():
-                    break
-            except NoSuchElementException:
-                ...
-            sleep(uniform(0.2, 0.6))
-            elapsed_time = time() - start_time
-            if elapsed_time > (int(self._scroll_minutes) * 60):  # 60 seconds = 1 minutes
-                break
-
-        return results
-
-    def _scrape_result_and_store(self, driver: WebDriver, result: any, query: str,
-                                 results_indices: list[int]):
-        """
-        Scrape and store data from a search result.
-        Only store fields: title, map_link, cover_image, rating, category, address, webpage, phone_number, working_hours.
-        """
-        temp_data = {}
-
-        # latitude and longitude (not stored)
-        self.__pprint_override(query=query, status="Getting Latitude and longitude", results_indices=results_indices)
-        _, _, map_link = self.validate_result_link(result, driver)
-
-        # get cover image
-        self.__pprint_override(query=query, status="Getting cover image", results_indices=results_indices)
-        cover_image = self.get_cover_image()
-
-        # get title
-        self.__pprint_override(query=query, status="Getting title", results_indices=results_indices)
-        card_title = self.get_title(driver)
-
-        # get rating
-        self.__pprint_override(query=query, status="Getting rating", results_indices=results_indices)
-        card_rating = self.get_rating_in_card(driver)
-
-        # get category
-        self.__pprint_override(query=query, status="Getting Category", results_indices=results_indices)
-        card_category = self.get_category(driver)
-
-        # get address
-        self.__pprint_override(query=query, status="Getting Address", results_indices=results_indices)
-        card_address = self.get_address(driver)
-
-        # get website link
-        self.__pprint_override(query=query, status="Getting WebLink", results_indices=results_indices)
-        card_website_link = self.get_website_link(driver)
-
-        # get phone number
-        self.__pprint_override(query=query, status="Getting Phone Number", results_indices=results_indices)
-        card_phone_number = self.get_phone_number(driver)
-
-        # get working hours
-        self.__pprint_override(query=query, status="Getting Working hours", results_indices=results_indices)
-        card_hours = self.get_working_hours(driver)
-
-        # Reset driver again
-        self.__pprint_override(query=query, status="Resetting Driver", results_indices=results_indices)
-        self.reset_driver_for_next_run(result, driver)
-
-        # Only store the required fields
-        temp_data["title"] = card_title
-        temp_data["map_link"] = map_link
-        temp_data["cover_image"] = cover_image
-        temp_data["rating"] = card_rating
-        temp_data["category"] = card_category
-        temp_data["address"] = card_address
-        temp_data["webpage"] = card_website_link
-        temp_data["phone_number"] = card_phone_number
-        temp_data["working_hours"] = card_hours
-
-        # Store data in runtime
-        temp_list = [temp_data]
-        self.__pprint_override(query=query, status="Dumping data in CSV file", results_indices=results_indices)
-        self._file_creator.create(list_of_dict_data=temp_list)
-
-    def start_scrapper(self, query: str) -> None:
-        """
-        Start the scraping process for a given query.
-        """
-        try:
-            if self._verbose:
-                self.__pprint_override(query=query, status="Initializing Browser")
-            else:
-                self.__pprint_override(query=query, status="Running the script")
-
             driver = self.create_chrome_driver()
-            self.__pprint_override(query=query, status="Loading URL")
-
-            if query.lower().strip().startswith("http"):
-                self.load_url(driver, query)
-            else:
-                self.load_url(driver, self._maps_url)
-
-            # Handle consent screen
+            driver.get(self._maps_url)
             self.handle_consent_screen(driver)
-
-            self.__pprint_override(query=query, status="Searching query")
-
-            if not query.lower().strip().startswith("http"):
-                self.search_query(query)
+            self.search_query(driver, query)
             self._main_handler = driver.current_window_handle
-
-            self.__pprint_override(query=query, status="Loading Links from GMAPS")
-
-            # load all the results
             results = self.scroll_to_the_end_event(driver)
-
-            result_indices = [len(results), 1]
+            row_number = row_number_start
             for result in results:
-                if self._stop_event.is_set():
-                    break
-                # Scrape and store data
-                self._scrape_result_and_store(driver=driver, result=result, query=query,
-                                              results_indices=result_indices)
-                result_indices[1] += 1
-
-            self.__pprint_override(query=query, status="Driver Closed")
-            driver.close()
+                if result == "continue":
+                    continue
+                lead = {}
+                lead["RowNumber"] = row_number
+                lead["title"] = self.get_title(driver)
+                lead["map_link"] = self.validate_result_link(result, driver)
+                lead["cover_image"] = self.get_cover_image(driver)
+                lead["rating"] = self.get_rating_in_card(driver)
+                lead["category"] = self.get_category(driver)
+                lead["address"] = self.get_address(driver)
+                lead["webpage"] = self.get_website_link(driver)
+                lead["phone_number"] = self.get_phone_number(driver)
+                lead["working_hours"] = self.get_working_hours(driver)
+                leads.append(lead)
+                row_number += 1
+                self.reset_driver_for_next_run(result, driver)
+            driver.quit()
         except NoSuchWindowException:
-            self.__pprint_override(query=query, status="Browser Closed")
-
-if __name__ == '__main__':
-    App = GoogleMaps()
-    App.start_scrapper("Girl & The Goat")
-    # App.start_scrapper("restaurants near me")
+            pass
+        except Exception as e:
+            if self._verbose:
+                print(f"Error during scraping: {e}")
+        return leads
