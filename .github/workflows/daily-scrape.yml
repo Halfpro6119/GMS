@@ -3,7 +3,7 @@ name: Daily Google Maps Scrape
 on:
   schedule:
     # Runs every day at 2:00 UTC
-    - cron: '0 2 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
