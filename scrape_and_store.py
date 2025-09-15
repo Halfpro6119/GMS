@@ -15,8 +15,14 @@ def mark_search_used(search):
     supabase.table("Google_Maps Searches").update({"searchUSED": True}).eq("Searches", search).execute()
 
 def insert_leads(leads):
-    if leads:
-        supabase.table("Roofing Leads").insert(leads).execute()
+    for lead in leads:
+        try:
+            supabase.table("Roofing Leads").insert(lead).execute()
+        except Exception as e:
+            if "duplicate key value violates unique constraint" in str(e):
+                print(f"Duplicate lead skipped: {lead.get('title', '')}")
+            else:
+                print(f"Error inserting lead: {lead} -- {e}")
 
 def main():
     searches = get_unused_searches()
