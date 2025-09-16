@@ -108,11 +108,31 @@ class GoogleMaps:
             return self._unavailable_text
 
     def get_title(self, driver):
-        try:
-            title = driver.find_element(By.CSS_SELECTOR, '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div:nth-child(1) > h1')
-            return title.text
-        except Exception:
-            return self._unavailable_text
+        """
+        Tries several selectors to robustly get the business title from the panel.
+        """
+        selectors = [
+            # Most recent Google Maps selector for business name
+            'h1[class*="fontHeadlineLarge"]',
+            'div[class*="fontHeadlineLarge"]',
+            # Fallback: any visible h1
+            'h1',
+            # Previous selector (your original)
+            '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div:nth-child(1) > h1'
+        ]
+        for selector in selectors:
+            try:
+                title_elem = driver.find_element(By.CSS_SELECTOR, selector)
+                title = title_elem.text.strip()
+                if title:
+                    if self._verbose:
+                        print(f"Scraped title using selector '{selector}': {title}")
+                    return title
+            except Exception:
+                continue
+        if self._verbose:
+            print("Could not find business title, returning Not Available")
+        return self._unavailable_text
 
     def get_rating_in_card(self, driver):
         try:
