@@ -112,19 +112,15 @@ class GoogleMaps:
         Tries several selectors to robustly get the business title from the panel.
         """
         selectors = [
-            # Most recent Google Maps selector for business name
             'h1[class*="fontHeadlineLarge"]',
-            'div[class*="fontHeadlineLarge"]',
-            # Fallback: any visible h1
-            'h1',
-            # Previous selector (your original)
-            '#QA0Szd > div > div > div.w6VYqd > div.bJzME.tTVLSc > div > div.e07Vkf.kA9KIf > div > div > div.TIHn2 > div > div.lMbq3e > div:nth-child(1) > h1'
+            'h1[class*="DUwDvf"]',
+            'h1',  # fallback to any h1
         ]
         for selector in selectors:
             try:
                 title_elem = driver.find_element(By.CSS_SELECTOR, selector)
                 title = title_elem.text.strip()
-                if title:
+                if title and title.lower() != "results":
                     if self._verbose:
                         print(f"Scraped title using selector '{selector}': {title}")
                     return title
@@ -207,8 +203,9 @@ class GoogleMaps:
                     continue
                 lead = {}
                 lead["RowNumber"] = row_number
-                lead["title"] = self.get_title(driver)
                 lead["map_link"] = self.validate_result_link(result, driver)
+                # After switching to the business tab, get its title
+                lead["title"] = self.get_title(driver)
                 lead["cover_image"] = self.get_cover_image(driver)
                 lead["rating"] = self.get_rating_in_card(driver)
                 lead["category"] = self.get_category(driver)
